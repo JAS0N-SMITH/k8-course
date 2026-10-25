@@ -287,3 +287,111 @@ kubectl proxy
 bootdev run
 bootdev run -s
 ```
+
+## API Service
+
+We've deployed one service, and we've deployed multiple instances of it. Time to deploy a second service!
+
+This service doesn't serve a webpage! It's a JSON API. It's the backend for our chat application. By deploying the API and configuring the front-end to talk to it, we'll have a functional chat application!
+
+### Create a Deployment Configuration
+
+Let's write a deployment from scratch.
+
+Feel free to reference the k8s docs here as you go for examples of the proper structure.
+
+1. [ ] Create a new file called `api-deployment.yaml`.
+2. [ ] Add the `apiVersion` and `kind` fields. The apiVersion is apps/v1 and, since this is a deployment, the kind is Deployment.
+3. [ ] Add a `metadata/name` field, and let's name our deployment synergychat-api for consistency.
+4. [ ] Add a `metadata/labels/app` field, and also set it to synergychat-api. This will be used to select the pods that this deployment manages.
+5. [ ] Add a `spec/replicas` field and let's set it to 1. We can always scale up to more pods later.
+6. [ ] Add a `spec/selector/matchLabels/app` field and set it to synergychat-api. This should match the label we set in step 4.
+7. [ ] Add a `spec/template/metadata/labels/app` field and set it to synergychat-api. Again, this should match the label we set in step 4. Labels are important because they're how Kubernetes knows which pods belong to which deployments.
+8. [ ] Add a `spec/template/spec/containers` field. This actually contains a list of containers that will be deployed:
+       _Note: A hyphen is how you denote a list item in YAML_
+   1. [ ] Set the `name` of the container to synergychat-api.
+   2. [ ] Set the `image` to bootdotdev/synergychat-api:latest. This tells k8s where to download the Docker image from.
+
+I don't want to give you the YAML because I want you to type it out, but here's the equivalent JSON:
+
+```json
+{
+  "apiVersion": "apps/v1",
+  "kind": "Deployment",
+  "metadata": {
+    "name": "synergychat-api",
+    "labels": {
+      "app": "synergychat-api"
+    }
+  },
+  "spec": {
+    "replicas": 1,
+    "selector": {
+      "matchLabels": {
+        "app": "synergychat-api"
+      }
+    },
+    "template": {
+      "metadata": {
+        "labels": {
+          "app": "synergychat-api"
+        }
+      },
+      "spec": {
+        "containers": [
+          {
+            "name": "synergychat-api",
+            "image": "bootdotdev/synergychat-api:latest"
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+### Create the Deployment
+
+Run the following command to create the deployment:
+
+```bash
+kubectl apply -f api-deployment.yaml
+```
+
+Next, take a look at all the pods you have running now. You should see pods for the web service and a pod for the api service.
+
+However, you might notice that the api pod isn't in a "ready" state. In fact, it should be stuck in a "CrashLoopBackOff" status. Oh no! We've created a thrashing pod!
+
+Run:
+
+```bash
+kubectl get pods
+```
+
+```bash
+kubectl proxy
+```
+
+Run and submit the CLI tests.
+
+```bash
+bootdev run
+bootdev run -s
+```
+
+## Thrashing Pods
+
+One of the most common problems you'll run into when working with Kubernetes is Pods that keep crashing and restarting. This is called "thrashing" and it's usually caused by one of a few things:
+
+- The application recently had a bug introduced in the latest image version
+- The application is misconfigured and can't start properly
+- A dependency of the application is misconfigured and the application can't start properly
+- The application is trying to use too much memory and is being killed by Kubernetes
+
+### What Is “CrashLoopBackOff”?
+
+When a pod's status is CrashLoopBackOff, that means the container keeps crashing (the program is exiting with a non-zero exit code, like 1).
+
+Because Kubernetes is all about building self-healing systems, it will automatically restart the container. However, each time it tries to restart the container, if it crashes again, it will wait longer and longer in between restarts. That's why it's called a "backoff".
+
+To fix a thrashing pod, you need to find out why it's crashing. We'll do that in a later lesson.
