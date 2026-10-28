@@ -2,6 +2,52 @@
 
 https://www.boot.dev/lessons/402f9141-74ef-4933-abb1-5be6404b4b83
 
+## Quick Restart Cheat Sheet
+
+```bash
+# 1. Start the cluster (CORS flag needed for boot.dev)
+minikube start --extra-config="apiserver.cors-allowed-origins=['http://boot.dev']"
+minikube status                      # expect: Running / Configured
+
+# 2. Re-apply all manifests (safe to re-run)
+kubectl apply -f api-configmap.yaml -f crawler-configmap.yaml
+kubectl apply -f web-deployment.yaml -f api-deployment.yaml -f crawler-deployment.yaml
+kubectl apply -f web-configmap.yaml
+kubectl apply -f web-service.yaml -f api-service.yaml -f crawler-service.yaml
+
+# 2b. Gateway API (Envoy Gateway must be installed; only needed again after `minikube delete`)
+# helm install eg oci://docker.io/envoyproxy/gateway-helm --version v1.2.0 -n envoy-gateway-system --create-namespace
+kubectl apply -f app-gatewayclass.yaml -f app-gateway.yaml
+kubectl apply -f web-httproute.yaml -f api-httproute.yaml
+
+# 3. Check everything is up
+kubectl get deployments
+kubectl get pods                     # wait for READY 1/1
+kubectl get services
+kubectl get configmaps
+kubectl get gatewayclass,gateway,httproute   # Gateway should show PROGRAMMED=True
+
+# 3b. Reach the gateway from your Mac (separate terminal, keep running)
+minikube tunnel                      # gives the Gateway an external IP
+# Map hostnames to the Gateway address in /etc/hosts:
+#   <GATEWAY-IP>  synchat.internal synchatapi.internal
+kubectl get gateway app-gateway      # ADDRESS column = <GATEWAY-IP>
+
+# 4. Access / debug
+kubectl port-forward PODNAME 8080:8080
+kubectl logs PODNAME
+kubectl describe pod PODNAME
+kubectl proxy                        # http://127.0.0.1:8001/api/v1/namespaces/default/pods
+
+# 5. Boot.dev CLI
+bootdev run                          # run tests
+bootdev run -s                       # run tests and submit
+
+# Shutdown
+minikube stop                        # keep cluster state
+minikube delete                      # wipe everything
+```
+
 ## Setup:
 
 ### K8
@@ -395,3 +441,123 @@ When a pod's status is CrashLoopBackOff, that means the container keeps crashing
 Because Kubernetes is all about building self-healing systems, it will automatically restart the container. However, each time it tries to restart the container, if it crashes again, it will wait longer and longer in between restarts. That's why it's called a "backoff".
 
 To fix a thrashing pod, you need to find out why it's crashing. We'll do that in a later lesson.
+
+## Config Maps
+
+There are several ways to manage environment variables in Kubernetes. One of the most common ways is to use ConfigMaps. ConfigMaps allow us to decouple our configurations from our container images, which is important because we don't want to have to rebuild our images every time we want to change a configuration value.
+
+In a Dockerfile we can set environment variables like this:
+
+```dockerfile
+ENV PORT=3000
+```
+
+The trouble is, that means that everyone using that image will have to use port `3000`. It also means that if we want to change the port, we have to rebuild the image.
+
+First, let's take a closer look at our crashing pod and try to figure out why it's crashing.
+
+```bash
+kubectl get pods
+```
+
+Copy the pod name and then get the logs:
+
+```bash
+kubectl logs <pod-name>
+```
+
+You should see that a specific environment variable is missing! Let's fix that.
+
+Create a new file. Let's call it api-configmap.yaml. Add the following YAML to it:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: synergychat-api-configmap
+data:
+  API_PORT: "8080"
+```
+
+Next, apply the config map:
+
+```bash
+kubectl apply -f api-configmap.yaml
+```
+
+Now, we haven't yet connected the config map to our pod, so it should still be crashing. However, for now, let's just validate that the config map was created successfully:
+
+```bash
+kubectl get configmaps
+```
+
+Run:
+
+```bash
+kubectl proxy
+```
+
+Run and submit the CLI tests.
+
+```bash
+bootdev run 9eb61c75-e1c4-4e1c-9d57-984575974e0d
+bootdev run -s 9eb61c75-e1c4-4e1c-9d57-984575974e0d
+```
+
+## Applying the Config Map
+
+Now that we have a config map, we need to connect it to our deployment.
+Assignment
+
+Open up your api-deployment.yaml file. We're going to add a few things to it. Under the containers section, add the following to the first (and only) entry:
+
+```yaml
+env:
+  - name: API_PORT
+    valueFrom:
+      configMapKeyRef:
+        name: synergychat-api-configmap
+        key: API_PORT
+```
+
+This tells Kubernetes to set the `API_PORT` environment variable to the value of the `API_PORT` key in the `synergychat-api-configmap` config map. Reference the official docs if you're confused about the structure of the yaml.
+
+Next, apply the deployment. Hopefully, you remember the command for this by now.
+
+```bash
+kubectl apply -f api-deployment.yaml
+```
+
+Once it's applied, you should be able to take a look at the pods and see that a new API pod has been deployed and isn't crashing!
+
+Let's forward the API pod's 8080 port to our local machine so we can test it out.
+
+```bash
+kubectl port-forward <pod-name> 8080:8080
+```
+
+Make sure it returns a 404 response when you hit the root:
+
+```bash
+curl http://localhost:8080
+```
+
+Run and submit the CLI tests.
+
+```bash
+bootdev run
+bootdev run -s
+```
+
+## Config Maps Are Insecure
+
+ConfigMaps are a great way to manage innocent environment variables in Kubernetes. Things like:
+
+- Ports
+- URLs of other services
+- Feature flags
+- Settings that change between environments, like DEBUG mode
+
+However, they are not cryptographically secure. **ConfigMaps aren't encrypted**, and they can be accessed by anyone with access to the cluster.
+
+If you need to store sensitive information, you should use **Kubernetes Secrets** or a third-party solution.
